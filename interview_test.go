@@ -2,6 +2,7 @@ package customerimporter
 
 import (
 	"bufio"
+	"log"
 	"os"
 	"strings"
 	"testing"
@@ -19,7 +20,7 @@ func TestFindEmailFieldPosition(t *testing.T) {
 
 	for _, h := range headers {
 		t.Run(h, func(t *testing.T) {
-			s := bufio.NewScanner(strings.NewReader(h))
+			s := bufio.NewReader(strings.NewReader(h))
 
 			position, err := findEmailFieldPosition(s)
 			if err != nil {
@@ -47,7 +48,7 @@ func TestFindEmailFieldPositionButMissingEmailField(t *testing.T) {
 
 	for _, h := range headers {
 		t.Run(h, func(t *testing.T) {
-			s := bufio.NewScanner(strings.NewReader(h))
+			s := bufio.NewReader(strings.NewReader(h))
 
 			position, err := findEmailFieldPosition(s)
 			if position != 0 || err == nil {
@@ -169,6 +170,22 @@ func TestCountEmailDomainsButLoadDataFromRealFile(t *testing.T) {
 
 	if len(domains) != 501 {
 		t.Fatalf("Invalid number of email domains. Expected: 501, Actually: %d", len(domains))
+	}
+}
+
+func BenchmarkCountEmailDomains(b *testing.B) {
+	temp, err := os.CreateTemp(b.TempDir(), "benchmark")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	log.SetOutput(temp)
+
+	for i := 0; i < b.N; i++ {
+		_, err := CountEmailDomains("./customers.csv")
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

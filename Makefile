@@ -6,3 +6,9 @@ build:
 
 test:
 	go test --race .
+
+clean:
+	rm -r build
+
+benchmark:
+	go test -bench=CountEmailDomains -benchmem -memprofile mem.prof -cpuprofile cpu.prof

@@ -19,6 +19,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"sync"
 )
 
 type UniqueValue[T comparable] map[T]interface{}
@@ -29,11 +30,18 @@ func (e EmailResult) CountDomain(domain string) int {
 	return len(e[domain])
 }
 
-func findEmailFieldPosition(s *bufio.Scanner) (uint, error) {
-	s.Scan()
-	line := s.Text()
+func findEmailFieldPosition(s *bufio.Reader) (uint, error) {
+	line, err := s.ReadString('\n')
+	if err != nil {
+		return 0, err
+	}
+
 	if line == "" {
 		return 0, errors.New("file is empty")
+	}
+
+	if line == "email" {
+		return 0, nil
 	}
 
 	meta := strings.Split(line, ",")
@@ -57,9 +65,9 @@ func CountEmailDomains(path string) (EmailResult, error) {
 	}
 	defer f.Close()
 
-	s := bufio.NewScanner(f)
+	s := bufio.NewReader(f)
 
-	emailPosition, err := findEmailFieldPosition(s)
+	emailIndex, err := findEmailFieldPosition(s)
 	if err != nil {
 		return nil, err
 	}
@@ -67,32 +75,76 @@ func CountEmailDomains(path string) (EmailResult, error) {
 	res := make(map[string]UniqueValue[uint32])
 	emailRegex := regexp.MustCompile(`^[\w\-\\.]+@([\w-]+\.)+[\w-]{2,}$`)
 
-	for s.Scan() {
-		buf := bytes.Split(s.Bytes(), []byte(","))
-		if len(buf) <= 1 {
-			log.Printf("Invalid record: %v\n", buf)
-			continue
-		}
+	recordCh := make(chan []byte)
+	done := make(chan bool)
 
-		email := buf[emailPosition]
-		if !emailRegex.Match(email) {
-			log.Printf("Invalid email: %s", email)
-			continue
-		}
+	wg := sync.WaitGroup{}
+	mutex := sync.Mutex{}
 
-		hash := fnv.New32()
-		hash.Write(email)
+	wg.Add(1)
 
-		domain := string(bytes.Split(email, []byte("@"))[1])
-
-		if res[domain] == nil {
-			res[domain] = UniqueValue[uint32]{
-				hash.Sum32(): nil,
+	go func() {
+		for {
+			line, err := s.ReadBytes('\n')
+			if err != nil && errors.Is(err, io.EOF) {
+				break
+			} else if err != nil {
+				log.Printf("Failed to read line from the file. %s", err)
+				continue
 			}
-		} else {
-			res[domain][hash.Sum32()] = nil
+
+			recordCh <- line
 		}
+
+		close(recordCh)
+		done <- true
+	}()
+
+	for i := 0; i < 10; i++ {
+		go func() {
+			for {
+				select {
+				case record := <-recordCh:
+					{
+						data := bytes.Split(record, []byte(","))
+
+						if len(data) <= 1 {
+							log.Printf("Invalid record: %v\n", data)
+							continue
+						}
+
+						email := data[emailIndex]
+						if !emailRegex.Match(email) {
+							log.Printf("Invalid email: %s", email)
+							continue
+						}
+
+						hash := fnv.New32()
+						hash.Write(email)
+						emailHash := hash.Sum32()
+
+						atIndex := bytes.Index(email, []byte("@"))
+						domain := string(email[atIndex+1:])
+
+						mutex.Lock()
+						if res[domain] == nil {
+							res[domain] = UniqueValue[uint32]{
+								emailHash: nil,
+							}
+						} else {
+							res[domain][emailHash] = nil
+						}
+						mutex.Unlock()
+					}
+				case <-done:
+					wg.Done()
+					return
+				}
+			}
+		}()
 	}
+
+	wg.Wait()
 
 	return res, nil
 }
