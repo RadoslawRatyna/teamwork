@@ -17,10 +17,13 @@ import (
 	"log"
 	"os"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
 )
+
+var emailRegex = regexp.MustCompile(`^[\w\-\\.]+@([\w-]+\.)+[\w-]{2,}$`)
 
 type UniqueValue[T comparable] map[T]interface{}
 
@@ -32,7 +35,7 @@ func (e EmailResult) CountDomain(domain string) int {
 
 func findEmailFieldPosition(s *bufio.Reader) (uint, error) {
 	line, err := s.ReadString('\n')
-	if err != nil {
+	if err != nil && !errors.Is(err, io.EOF) {
 		return 0, err
 	}
 
@@ -65,80 +68,33 @@ func CountEmailDomains(path string) (EmailResult, error) {
 	}
 	defer f.Close()
 
-	s := bufio.NewReader(f)
+	reader := bufio.NewReader(f)
 
-	emailIndex, err := findEmailFieldPosition(s)
+	emailIndex, err := findEmailFieldPosition(reader)
 	if err != nil {
 		return nil, err
 	}
 
-	res := make(map[string]UniqueValue[uint32])
-	emailRegex := regexp.MustCompile(`^[\w\-\\.]+@([\w-]+\.)+[\w-]{2,}$`)
-
-	recordCh := make(chan []byte)
-	done := make(chan bool)
-
+	domains := make(map[string]UniqueValue[uint32])
+	recordCh, done := make(chan []byte), make(chan bool)
 	wg := sync.WaitGroup{}
 	mutex := sync.Mutex{}
 
 	wg.Add(1)
+	go loadLines(reader, &wg, recordCh, done)
 
-	go func() {
-		for {
-			line, err := s.ReadBytes('\n')
-			if err != nil && errors.Is(err, io.EOF) {
-				break
-			} else if err != nil {
-				log.Printf("Failed to read line from the file. %s", err)
-				continue
-			}
+	coresNum := runtime.NumCPU()
 
-			recordCh <- line
-		}
-
-		close(recordCh)
-		done <- true
-	}()
-
-	for i := 0; i < 10; i++ {
+	for i := 0; i < coresNum; i++ {
 		go func() {
 			for {
 				select {
 				case record := <-recordCh:
 					{
-						data := bytes.Split(record, []byte(","))
-
-						if len(data) <= 1 {
-							log.Printf("Invalid record: %v\n", data)
-							continue
-						}
-
-						email := data[emailIndex]
-						if !emailRegex.Match(email) {
-							log.Printf("Invalid email: %s", email)
-							continue
-						}
-
-						hash := fnv.New32()
-						hash.Write(email)
-						emailHash := hash.Sum32()
-
-						atIndex := bytes.Index(email, []byte("@"))
-						domain := string(email[atIndex+1:])
-
-						mutex.Lock()
-						if res[domain] == nil {
-							res[domain] = UniqueValue[uint32]{
-								emailHash: nil,
-							}
-						} else {
-							res[domain][emailHash] = nil
-						}
-						mutex.Unlock()
+						addEmailDomain(&wg, &mutex, record, emailIndex, domains)
 					}
 				case <-done:
-					wg.Done()
-					return
+					break
 				}
 			}
 		}()
@@ -146,7 +102,76 @@ func CountEmailDomains(path string) (EmailResult, error) {
 
 	wg.Wait()
 
-	return res, nil
+	return domains, nil
+}
+
+func loadLines(r *bufio.Reader, wg *sync.WaitGroup, recordCh chan []byte, done chan bool) {
+	for {
+		line, err := r.ReadBytes('\n')
+		if line != nil && !bytes.Equal(line, []byte{}) {
+			wg.Add(1)
+			recordCh <- line
+		}
+
+		if err != nil && errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			log.Printf("Failed to read line from the file. %s", err)
+			continue
+		}
+	}
+
+	wg.Done()
+	done <- true
+}
+
+func readEmail(data []byte, emailIndex uint) []byte {
+	count := bytes.Count(data, []byte(","))
+
+	if count == 0 {
+		return data
+	}
+
+	first, last := bytes.Index(data, []byte(",")), bytes.LastIndex(data, []byte(","))
+
+	if emailIndex == 0 || first == last {
+		return data[0:first]
+	} else if emailIndex == uint(count) {
+		return data[last:]
+	}
+
+	return readEmail(data[first+1:last], emailIndex-1)
+}
+
+func addEmailDomain(wg *sync.WaitGroup, mutex *sync.Mutex, record []byte, emailIndex uint, res map[string]UniqueValue[uint32]) {
+	defer wg.Done()
+
+	if record == nil {
+		return
+	}
+
+	email := readEmail(record, emailIndex)
+	if !emailRegex.Match(email) {
+		log.Printf("Invalid email: %s", email)
+		return
+	}
+
+	hash := fnv.New32()
+	hash.Write(email)
+	emailHash := hash.Sum32()
+
+	atIndex := bytes.Index(email, []byte("@"))
+	domain := string(email[atIndex+1:])
+
+	mutex.Lock()
+	if res[domain] == nil {
+		res[domain] = UniqueValue[uint32]{
+			emailHash: nil,
+		}
+	} else {
+		res[domain][emailHash] = nil
+	}
+	mutex.Unlock()
 }
 
 func SaveResultToFile(path string, result EmailResult) {

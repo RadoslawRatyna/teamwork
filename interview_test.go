@@ -182,7 +182,7 @@ func BenchmarkCountEmailDomains(b *testing.B) {
 	log.SetOutput(temp)
 
 	for i := 0; i < b.N; i++ {
-		_, err := CountEmailDomains("./customers.csv")
+		_, err := CountEmailDomains("./big_customers.csv")
 		if err != nil {
 			b.Fatal(err)
 		}
