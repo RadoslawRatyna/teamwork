@@ -8,7 +8,7 @@ test:
 	go test --race .
 
 clean:
-	rm -r build
+	if [ -d "./build" ]; then rm -r build; fi
 
 benchmark:
 	go test -bench=CountEmailDomains -benchmem -memprofile mem.prof -cpuprofile cpu.prof
