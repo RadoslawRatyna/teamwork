@@ -61,7 +61,7 @@ func findEmailFieldPosition(s *bufio.Reader) (uint, error) {
 	return 0, errors.New("missing 'email' field")
 }
 
-func loadLines(r *bufio.Reader, wg *sync.WaitGroup, recordCh chan []byte, done chan bool) {
+func loadLines(r *bufio.Reader, wg *sync.WaitGroup, recordCh chan<- []byte, done chan<- bool) {
 	for {
 		line, err := r.ReadBytes('\n')
 		if line != nil && !bytes.Equal(line, []byte{}) {
@@ -151,6 +151,7 @@ func CountEmailDomains(path string) (EmailResult, error) {
 		mutex          sync.Mutex
 	)
 
+	// Load single line and send it to recordCh
 	wg.Add(1)
 	go loadLines(reader, &wg, recordCh, done)
 
@@ -190,8 +191,8 @@ func SaveResultToOutput(w io.Writer, result EmailResult) {
 	domains := maps.Keys(result)
 	sort.Strings(domains)
 
-	for _, k := range domains {
-		_, err := fmt.Fprintln(w, fmt.Sprintf("%-30s %d", k, result.CountDomains(k)))
+	for _, d := range domains {
+		_, err := fmt.Fprintln(w, fmt.Sprintf("%-30s %d", d, result.CountDomains(d)))
 		if err != nil {
 			log.Printf("Failed to save element of result: %s\n", err)
 		}

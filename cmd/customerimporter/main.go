@@ -26,7 +26,7 @@ func main() {
 	}
 
 	if *outputPath != "" {
-		err := customerimporter.SaveResultToFile(*outputPath, result)
+		err = customerimporter.SaveResultToFile(*outputPath, result)
 		if err != nil {
 			log.Fatal(err)
 		}
