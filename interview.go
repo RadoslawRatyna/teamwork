@@ -191,7 +191,7 @@ func SaveResultToOutput(w io.Writer, result EmailResult) {
 	sort.Strings(domains)
 
 	for _, k := range domains {
-		_, err := fmt.Fprintln(w, fmt.Sprintf("%s %d", k, result.CountDomains(k)))
+		_, err := fmt.Fprintln(w, fmt.Sprintf("%-30s %d", k, result.CountDomains(k)))
 		if err != nil {
 			log.Printf("Failed to save element of result: %s\n", err)
 		}
