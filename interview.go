@@ -29,7 +29,7 @@ type UniqueValue[T comparable] map[T]interface{}
 
 type EmailResult map[string]UniqueValue[uint32]
 
-func (e EmailResult) CountDomain(domain string) int {
+func (e EmailResult) CountDomains(domain string) int {
 	return len(e[domain])
 }
 
@@ -61,50 +61,6 @@ func findEmailFieldPosition(s *bufio.Reader) (uint, error) {
 	return 0, errors.New("missing 'email' field")
 }
 
-func CountEmailDomains(path string) (EmailResult, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, err
-	}
-	defer f.Close()
-
-	reader := bufio.NewReader(f)
-
-	emailIndex, err := findEmailFieldPosition(reader)
-	if err != nil {
-		return nil, err
-	}
-
-	domains := make(map[string]UniqueValue[uint32])
-	recordCh, done := make(chan []byte), make(chan bool)
-	wg := sync.WaitGroup{}
-	mutex := sync.Mutex{}
-
-	wg.Add(1)
-	go loadLines(reader, &wg, recordCh, done)
-
-	coresNum := runtime.NumCPU()
-
-	for i := 0; i < coresNum; i++ {
-		go func() {
-			for {
-				select {
-				case record := <-recordCh:
-					{
-						addEmailDomain(&wg, &mutex, record, emailIndex, domains)
-					}
-				case <-done:
-					break
-				}
-			}
-		}()
-	}
-
-	wg.Wait()
-
-	return domains, nil
-}
-
 func loadLines(r *bufio.Reader, wg *sync.WaitGroup, recordCh chan []byte, done chan bool) {
 	for {
 		line, err := r.ReadBytes('\n')
@@ -125,7 +81,7 @@ func loadLines(r *bufio.Reader, wg *sync.WaitGroup, recordCh chan []byte, done c
 	done <- true
 }
 
-func readEmail(data []byte, emailIndex uint) []byte {
+func readEmailFromRecord(data []byte, emailIndex uint) []byte {
 	count := bytes.Count(data, []byte(","))
 
 	if count == 0 {
@@ -134,13 +90,13 @@ func readEmail(data []byte, emailIndex uint) []byte {
 
 	first, last := bytes.Index(data, []byte(",")), bytes.LastIndex(data, []byte(","))
 
-	if emailIndex == 0 || first == last {
+	if emailIndex == 0 && first == last {
 		return data[0:first]
 	} else if emailIndex == uint(count) {
-		return data[last:]
+		return data[last+1:]
 	}
 
-	return readEmail(data[first+1:last], emailIndex-1)
+	return readEmailFromRecord(data[first+1:last], emailIndex-1)
 }
 
 func addEmailDomain(wg *sync.WaitGroup, mutex *sync.Mutex, record []byte, emailIndex uint, res map[string]UniqueValue[uint32]) {
@@ -150,7 +106,7 @@ func addEmailDomain(wg *sync.WaitGroup, mutex *sync.Mutex, record []byte, emailI
 		return
 	}
 
-	email := readEmail(record, emailIndex)
+	email := readEmailFromRecord(record, emailIndex)
 	if !emailRegex.Match(email) {
 		log.Printf("Invalid email: %s", email)
 		return
@@ -174,14 +130,60 @@ func addEmailDomain(wg *sync.WaitGroup, mutex *sync.Mutex, record []byte, emailI
 	mutex.Unlock()
 }
 
-func SaveResultToFile(path string, result EmailResult) {
+func CountEmailDomains(path string) (EmailResult, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	reader := bufio.NewReader(f)
+
+	emailIndex, err := findEmailFieldPosition(reader)
+	if err != nil {
+		return nil, err
+	}
+
+	var (
+		domains        = make(map[string]UniqueValue[uint32])
+		recordCh, done = make(chan []byte), make(chan bool)
+		wg             sync.WaitGroup
+		mutex          sync.Mutex
+	)
+
+	wg.Add(1)
+	go loadLines(reader, &wg, recordCh, done)
+
+	coresNum := runtime.NumCPU()
+
+	for i := 0; i < coresNum; i++ {
+		go func() {
+			for {
+				select {
+				case record := <-recordCh:
+					addEmailDomain(&wg, &mutex, record, emailIndex, domains)
+				case <-done:
+					break
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
+
+	return domains, nil
+}
+
+func SaveResultToFile(path string, result EmailResult) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0600)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer f.Close()
 
 	SaveResultToOutput(f, result)
+
+	return nil
 }
 
 func SaveResultToOutput(w io.Writer, result EmailResult) {
@@ -189,7 +191,7 @@ func SaveResultToOutput(w io.Writer, result EmailResult) {
 	sort.Strings(domains)
 
 	for _, k := range domains {
-		_, err := fmt.Fprintln(w, fmt.Sprintf("%s %d", k, result.CountDomain(k)))
+		_, err := fmt.Fprintln(w, fmt.Sprintf("%s %d", k, result.CountDomains(k)))
 		if err != nil {
 			log.Printf("Failed to save element of result: %s\n", err)
 		}

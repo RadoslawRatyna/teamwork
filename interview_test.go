@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -75,7 +76,7 @@ func TestCountEmailDomains(t *testing.T) {
 	}
 
 	if len(domains["example.com"]) != 1 {
-		t.Fatalf("Invalid amount of example.com domain. Expected: 1, Actually: %d", domains.CountDomain("example.com"))
+		t.Fatalf("Invalid amount of example.com domain. Expected: 1, Actually: %d", domains.CountDomains("example.com"))
 	}
 }
 
@@ -114,7 +115,7 @@ test@example.com,127.0.0.1`,
 			}
 
 			if len(domains["example.com"]) != 1 {
-				t.Fatalf("Invalid amount of example.com domain. Expected: 1, Actually: %d", domains.CountDomain("example.com"))
+				t.Fatalf("Invalid amount of example.com domain. Expected: 1, Actually: %d", domains.CountDomains("example.com"))
 			}
 		})
 	}
@@ -182,9 +183,65 @@ func BenchmarkCountEmailDomains(b *testing.B) {
 	log.SetOutput(temp)
 
 	for i := 0; i < b.N; i++ {
-		_, err := CountEmailDomains("./big_customers.csv")
+		_, err := CountEmailDomains("./customers.csv")
 		if err != nil {
 			b.Fatal(err)
+		}
+	}
+}
+
+func TestReadEmailFromRecord(t *testing.T) {
+	type EmailRecord struct {
+		record     string
+		emailIndex uint
+	}
+
+	data := []EmailRecord{
+		{
+			"test@example.com",
+			0,
+		},
+		{
+			"Name,test@example.com",
+			1,
+		},
+		{
+			"Name,test@example.com,LastName",
+			1,
+		},
+		{
+			"Name,LastName,test@example.com",
+			2,
+		},
+	}
+
+	for _, d := range data {
+		t.Run(d.record, func(t *testing.T) {
+			email := readEmailFromRecord([]byte(d.record), d.emailIndex)
+
+			if string(email) != "test@example.com" {
+				t.Fatalf("Invalid email. Expected test@example.com, Actually: %s", email)
+			}
+		})
+	}
+}
+
+func TestLoadLines(t *testing.T) {
+	var (
+		wg             sync.WaitGroup
+		recordCh, done = make(chan []byte), make(chan bool)
+		data           = "Dennis,Henry,dhenry2@hubpages.com,Male,155.75.186.217"
+		reader         = bufio.NewReader(strings.NewReader(data))
+	)
+
+	go loadLines(reader, &wg, recordCh, done)
+
+	wg.Wait()
+
+	select {
+	case record := <-recordCh:
+		if string(record) != data {
+			t.Fatalf("Invalid record data: %s", record)
 		}
 	}
 }

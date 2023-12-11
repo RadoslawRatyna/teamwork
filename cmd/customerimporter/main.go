@@ -15,7 +15,9 @@ func main() {
 	flag.Parse()
 
 	if _, err := os.Stat(*inputPath); errors.Is(err, os.ErrNotExist) {
-		log.Fatal("Missing source CVS file!")
+		log.Println("Missing source CVS file!")
+		flag.PrintDefaults()
+		os.Exit(-1)
 	}
 
 	result, err := customerimporter.CountEmailDomains(*inputPath)
@@ -24,7 +26,10 @@ func main() {
 	}
 
 	if *outputPath != "" {
-		customerimporter.SaveResultToFile(*outputPath, result)
+		err := customerimporter.SaveResultToFile(*outputPath, result)
+		if err != nil {
+			log.Fatal(err)
+		}
 		log.Println("Saved result to file " + *outputPath)
 	} else {
 		customerimporter.SaveResultToOutput(os.Stdout, result)
