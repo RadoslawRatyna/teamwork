@@ -1,7 +1,7 @@
 run:
 	go run cmd/customerimporter/main.go
 
-build:
+build: test
 	go build -o build/customerimporter cmd/customerimporter/main.go
 
 test:
