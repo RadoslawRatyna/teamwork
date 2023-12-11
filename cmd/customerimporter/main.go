@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	outputPath := flag.String("o", "", "Output path for result of customerimporter program")
+	outputPath := flag.String("o", "", "Path to file that will be saved result of program. File format is simple text file")
 	inputPath := flag.String("f", "", "Path to source CSV data")
 
 	flag.Parse()
